@@ -10,6 +10,7 @@ from better_abc import abstract_attribute
 from jaxtyping import Float, Int
 from transformers.utils import is_bitsandbytes_available
 
+from transformer_lens.components.layer_norm_per_head import LayerNormPerHead
 from transformer_lens.FactoredMatrix import FactoredMatrix
 from transformer_lens.hook_points import HookPoint
 from transformer_lens.HookedTransformerConfig import HookedTransformerConfig
@@ -20,7 +21,6 @@ from transformer_lens.utils import get_offset_position_ids
 if is_bitsandbytes_available():
     import bitsandbytes as bnb
     from bitsandbytes.nn.modules import Params4bit
-
 
 class AbstractAttention(ABC, nn.Module):
     alibi: Union[torch.Tensor, None]
@@ -104,6 +104,10 @@ class AbstractAttention(ABC, nn.Module):
             if self.layer_id is None:  # keep mypy happy
                 raise ValueError("Layer ID must be provided to scale attention scores")
             self.attn_scale *= self.layer_id + 1
+
+        if self.cfg.use_post_qk_ln:
+            self.ln_q = LayerNormPerHead(self.cfg)
+            self.ln_k = LayerNormPerHead(self.cfg)
 
         self.hook_k = HookPoint()  # [batch, pos, head_index, d_head]
         self.hook_q = HookPoint()  # [batch, pos, head_index, d_head]
@@ -194,7 +198,14 @@ class AbstractAttention(ABC, nn.Module):
         """
 
         q, k, v = self.calculate_qkv_matrices(query_input, key_input, value_input)
-
+        
+        if self.cfg.use_post_qk_ln:
+            q = self.ln_q(q)
+            k = self.ln_k(k)
+            
+        if self.layer_id == 0:
+            print(q[0, 0, :5, :5].cpu().numpy())
+            
         if past_kv_cache_entry is not None:
             # Appends the new keys and values to the cached values, and automatically updates the cache
             kv_cache_pos_offset = past_kv_cache_entry.past_keys.size(1)

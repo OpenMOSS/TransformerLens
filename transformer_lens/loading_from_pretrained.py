@@ -16,6 +16,7 @@ from transformers import (
     AutoConfig,
     AutoModelForCausalLM,
     BertForPreTraining,
+    ChameleonForConditionalGeneration,
     T5ForConditionalGeneration,
 )
 
@@ -24,6 +25,7 @@ from transformer_lens.HookedTransformerConfig import HookedTransformerConfig
 from transformer_lens.pretrained.weight_conversions import (
     convert_bert_weights,
     convert_bloom_weights,
+    convert_chameleon_weights,
     convert_coder_weights,
     convert_gemma_weights,
     convert_gpt2_weights,
@@ -234,6 +236,7 @@ OFFICIAL_MODEL_NAMES = [
     "google-t5/t5-base",
     "google-t5/t5-large",
     "ai-forever/mGPT",
+    "facebook/chameleon-7b",
 ]
 """Official model names for models on HuggingFace."""
 
@@ -659,6 +662,7 @@ MODEL_ALIASES = {
     "google-t5/t5-base": ["t5-base"],
     "google-t5/t5-large": ["t5-large"],
     "ai-forever/mGPT": ["mGPT"],
+    "facebook/chameleon-7b": ["chameleon-7b"],
 }
 """Model aliases for models on HuggingFace."""
 
@@ -1101,9 +1105,11 @@ def convert_hf_model_config(model_name: str, **kwargs):
         use_local_attn = True if hf_config.sliding_window else False
         cfg_dict = {
             "d_model": hf_config.hidden_size,
-            "d_head": hf_config.head_dim
-            if hasattr(hf_config, "head_dim") and hf_config.head_dim > 0
-            else hf_config.hidden_size // hf_config.num_attention_heads,
+            "d_head": (
+                hf_config.head_dim
+                if hasattr(hf_config, "head_dim") and hf_config.head_dim > 0
+                else hf_config.hidden_size // hf_config.num_attention_heads
+            ),
             "n_heads": hf_config.num_attention_heads,
             "d_mlp": hf_config.intermediate_size,
             "n_layers": hf_config.num_hidden_layers,
@@ -1439,6 +1445,24 @@ def convert_hf_model_config(model_name: str, **kwargs):
             "attention_dir": "bidirectional",
             "use_attn_scale": False,
             "tie_word_embeddings": hf_config.tie_word_embeddings,
+        }
+    elif architecture == "ChameleonForConditionalGeneration":
+        cfg_dict = {
+            "d_model": hf_config.hidden_size,
+            "d_head": hf_config.hidden_size // hf_config.num_attention_heads,
+            "n_heads": hf_config.num_attention_heads,
+            "d_mlp": hf_config.intermediate_size,
+            "n_layers": hf_config.num_hidden_layers,
+            "n_ctx": hf_config.max_position_embeddings,
+            "eps": hf_config.rms_norm_eps,
+            "d_vocab": hf_config.vocab_size,
+            "act_fn": "silu",
+            "normalization_type": "RMS",
+            "positional_embedding_type": "rotary",
+            "rotary_base": hf_config.rope_theta,
+            "final_rms": True,
+            "gated_mlp": True,
+            "use_post_qk_ln": True,
         }
     else:
         raise NotImplementedError(f"{architecture} is not currently supported.")
@@ -1779,6 +1803,13 @@ def get_pretrained_state_dict(
                     token=huggingface_token,
                     **kwargs,
                 )
+            elif "chameleon" in official_model_name:
+                hf_model = ChameleonForConditionalGeneration.from_pretrained(
+                    official_model_name,
+                    torch_dtype=dtype,
+                    token=huggingface_token,
+                    **kwargs,
+                )
             else:
                 hf_model = AutoModelForCausalLM.from_pretrained(
                     official_model_name,
@@ -1828,6 +1859,8 @@ def get_pretrained_state_dict(
             state_dict = convert_gemma_weights(hf_model, cfg)
         elif cfg.original_architecture == "Gemma2ForCausalLM":
             state_dict = convert_gemma_weights(hf_model, cfg)
+        elif cfg.original_architecture == "ChameleonForConditionalGeneration":
+            state_dict = convert_chameleon_weights(hf_model, cfg)
         else:
             raise ValueError(
                 f"Loading weights from the architecture is not currently supported: {cfg.original_architecture}, generated from model name {cfg.model_name}. Feel free to open an issue on GitHub to request this feature."
