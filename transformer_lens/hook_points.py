@@ -377,8 +377,8 @@ class HookedRootModule(nn.Module):
     @contextmanager
     def hooks(
         self,
-        fwd_hooks: List[Tuple[Union[str, Callable], Callable]] = [],
-        bwd_hooks: List[Tuple[Union[str, Callable], Callable]] = [],
+        fwd_hooks: Sequence[Tuple[Union[str, Callable], Callable]] = [],
+        bwd_hooks: Sequence[Tuple[Union[str, Callable], Callable]] = [],
         reset_hooks_end: bool = True,
         clear_contexts: bool = False,
     ):
@@ -903,7 +903,7 @@ class HookedRootModule(nn.Module):
     @contextmanager
     def mount_hooked_modules(
         self,
-        hooked_modules: List[Tuple[str, str, torch.nn.Module]],
+        hooked_modules: Sequence[Tuple[str, str, torch.nn.Module]],
     ):
         """
         A context manager for adding child hooked modules at specified hook points.
