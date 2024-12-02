@@ -25,7 +25,6 @@ from typing import (
 import torch
 import torch.nn as nn
 import torch.utils.hooks as hooks
-
 from transformer_lens.utils import Slice, SliceInput
 
 
@@ -576,7 +575,7 @@ class HookedRootModule(nn.Module):
         remove_batch_dim: bool = False,
         cache: Optional[dict] = None,
         pos_slice: Union[Slice, SliceInput] = None,
-    ) -> Tuple[dict, list, list]:
+    ) -> Tuple[dict[str, torch.Tensor], list[tuple[str, Callable]], list[tuple[str, Callable]]]:
         """Creates hooks to cache activations. Note: It does not add the hooks to the model.
 
         Args:
@@ -696,7 +695,7 @@ class HookedRootModule(nn.Module):
         names_filter: NamesFilter = None,
         retain_grad: bool = False,
         cache: Optional[dict] = None,
-    ) -> Tuple[dict, list]:
+    ) -> Tuple[dict[str, torch.Tensor], list[tuple[str, Callable]]]:
         """Creates hooks to keep references to activations. Note: It does not add the hooks to the model.
 
         Args:
