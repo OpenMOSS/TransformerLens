@@ -8,8 +8,6 @@ import torch.nn as nn
 import torch.nn.functional as F
 from better_abc import abstract_attribute
 from jaxtyping import Float, Int
-from transformers.utils import is_bitsandbytes_available
-
 from transformer_lens.components.layer_norm_per_head import LayerNormPerHead
 from transformer_lens.FactoredMatrix import FactoredMatrix
 from transformer_lens.hook_points import HookPoint
@@ -17,6 +15,7 @@ from transformer_lens.HookedTransformerConfig import HookedTransformerConfig
 from transformer_lens.past_key_value_caching import HookedTransformerKeyValueCacheEntry
 from transformer_lens.utilities.attention import complex_attn_linear, simple_attn_linear
 from transformer_lens.utils import get_offset_position_ids
+from transformers.utils import is_bitsandbytes_available
 
 if is_bitsandbytes_available():
     import bitsandbytes as bnb
@@ -202,9 +201,6 @@ class AbstractAttention(ABC, nn.Module):
         if self.cfg.use_post_qk_ln:
             q = self.ln_q(q)
             k = self.ln_k(k)
-            
-        if self.layer_id == 0:
-            print(q[0, 0, :5, :5].cpu().numpy())
             
         if past_kv_cache_entry is not None:
             # Appends the new keys and values to the cached values, and automatically updates the cache
