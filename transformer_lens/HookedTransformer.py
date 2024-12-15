@@ -9,8 +9,10 @@ alteration of activations in individual components like attention heads and MLP 
 a deeper understanding of the internal workings of transformers like GPT-2.
 """
 import logging
+import math
 import os
 from typing import (
+    Any,
     Dict,
     List,
     NamedTuple,
@@ -32,7 +34,13 @@ import tqdm.auto as tqdm
 from fancy_einsum import einsum
 from jaxtyping import Float, Int
 from packaging import version
-from transformers import AutoModelForCausalLM, AutoTokenizer, PreTrainedTokenizerBase
+from transformers import (
+    AutoModelForCausalLM,
+    AutoProcessor,
+    AutoTokenizer,
+    PreTrainedTokenizerBase,
+)
+from transformers.image_utils import ImageInput
 from typing_extensions import Literal
 
 import transformer_lens.loading_from_pretrained as loading
@@ -111,6 +119,7 @@ class HookedTransformer(HookedRootModule):
         self,
         cfg: Union[HookedTransformerConfig, Dict],
         tokenizer: Optional[PreTrainedTokenizerBase] = None,
+        processor: Optional[Any] = None,
         move_to_device: bool = True,
         default_padding_side: Literal["left", "right"] = "right",
     ):
@@ -137,9 +146,15 @@ class HookedTransformer(HookedRootModule):
             )
 
         self.cfg = HookedTransformerConfig.unwrap(cfg)
+        self.processor = processor
+        
+        if self.processor is not None:
+            assert tokenizer is None, "Cannot pass both tokenizer and processor"
+            tokenizer = self.processor.tokenizer
 
         if tokenizer is not None:
             self.set_tokenizer(tokenizer, default_padding_side=default_padding_side)
+            
         elif self.cfg.tokenizer_name is not None:
             # If we have a tokenizer name, we can load it from HuggingFace
             if self.cfg.tokenizer_name in NON_HF_HOSTED_MODEL_NAMES:
@@ -155,14 +170,20 @@ class HookedTransformer(HookedRootModule):
                 if "phi" in self.cfg.tokenizer_name.lower():
                     use_fast = False
                 huggingface_token = os.environ.get("HF_TOKEN", None)
-                self.set_tokenizer(
-                    AutoTokenizer.from_pretrained(
+                if "chameleon" in self.cfg.tokenizer_name.lower():
+                    # Multimodal models need a processor
+                    self.processor = AutoProcessor.from_pretrained(self.cfg.tokenizer_name)
+                    tokenizer = self.processor.tokenizer
+                else:
+                    tokenizer = AutoTokenizer.from_pretrained(  
                         self.cfg.tokenizer_name,
                         add_bos_token=True,
                         trust_remote_code=self.cfg.trust_remote_code,
                         use_fast=use_fast,
                         token=huggingface_token,
-                    ),
+                    )
+                self.set_tokenizer(
+                    tokenizer,
                     default_padding_side=default_padding_side,
                 )
         else:
@@ -892,6 +913,175 @@ class HookedTransformer(HookedRootModule):
                 raise ValueError(f"Invalid input type to to_str_tokens: {type(input)}")
             str_tokens = self.tokenizer.batch_decode(tokens, clean_up_tokenization_spaces=False)
             return str_tokens
+        
+    @overload
+    def to_tokens_with_origins(
+        self,
+        input: Dict[str, Any],
+        tokens_only: Literal[True],
+        prepend_bos: Optional[Union[bool, None]] = USE_DEFAULT_VALUE,
+        padding_side: Optional[Union[Literal["left", "right"], None]] = USE_DEFAULT_VALUE,
+    ) -> Int[torch.Tensor, "batch pos"]: ...
+
+    @overload
+    def to_tokens_with_origins(
+        self,
+        input: Dict[str, Any],
+        tokens_only: Literal[False] = False,
+        prepend_bos: Optional[Union[bool, None]] = USE_DEFAULT_VALUE,
+        padding_side: Optional[Union[Literal["left", "right"], None]] = USE_DEFAULT_VALUE,
+    ) -> Tuple[Int[torch.Tensor, "batch pos"], List]: ...
+
+    def to_tokens_with_origins(
+        self,
+        input: Dict[str, Any],
+        tokens_only: bool = False,
+        prepend_bos: Optional[Union[bool, None]] = USE_DEFAULT_VALUE,
+        padding_side: Optional[Union[Literal["left", "right"], None]] = USE_DEFAULT_VALUE,
+    ) -> Tuple[Int[torch.Tensor, "batch pos"], List] | Int[torch.Tensor, "batch pos"]:
+        with utils.LocallyOverridenDefaults(
+            self, prepend_bos=prepend_bos, padding_side=padding_side
+        ):
+            assert self.tokenizer is not None, "Cannot use to_tokens without a tokenizer"
+            assert (
+                self.cfg.tokenizer_prepends_bos is not None
+            ), "Set the tokenizer for the model by calling set_tokenizer"
+            assert "text" in input, "Input must contain a 'text' key"
+            assert isinstance(input["text"], str), "Input text must be a string"
+            if "image" in input:
+                # Rename image to images
+                input = {**input, "images": input["image"]}
+            if "image" in input:
+                # Remove the (possible) batch dimension, and convert to list
+                images = input["image"]
+                if len(images.shape) == 3:
+                    images = [images]
+                elif len(images.shape) == 4:
+                    images = [image for image in images]
+                else:
+                    raise ValueError(f"Invalid image shape: {images.shape}. Expected 3 or 4 dimensions.")
+                input = {**input, "images": images}
+                
+            if "images" in input and len(input["images"]) > 0:
+                # Prepend the image token to the text if there's no image token in the text
+                if self.processor.image_token not in input["text"]:
+                    input = {**input, "text": self.processor.image_token + input["text"]}
+            accepted_keys = ["text", "images"]
+            input = {k: v for k, v in input.items() if k in accepted_keys}
+
+            if self.cfg.default_prepend_bos and not self.cfg.tokenizer_prepends_bos:
+                # We want to prepend bos but the tokenizer doesn't automatically do it, so we add it manually
+                input["text"] = utils.get_input_with_manually_prepended_bos(self.tokenizer, input["text"])
+                
+            processor = self.processor if self.processor is not None else self.tokenizer
+
+            processed = processor(
+                **input,
+                return_tensors="pt",
+                padding=True
+            ).to(self.cfg.device)
+            processed = {k: v.to(self.cfg.dtype) if isinstance(v, torch.Tensor) and v.dtype.is_floating_point else v for k, v in processed.items()}
+            tokens = processed["input_ids"]
+
+            if not self.cfg.default_prepend_bos and self.cfg.tokenizer_prepends_bos:
+                # We don't want to prepend bos but the tokenizer does it automatically, so we remove it manually
+                tokens = utils.get_tokens_with_bos_removed(self.tokenizer, tokens)
+            assert len(tokens.shape) == 2, "Tokens should have shape [batch, pos]"
+            assert tokens.shape[0] == 1, "Only batch size 1 is supported"
+                
+            if not tokens_only:                
+                str_tokens = processor.batch_decode(tokens[0], clean_up_tokenization_spaces=False)
+                assert len(str_tokens) == tokens.shape[1], "Number of string tokens should match number of tokens"
+                
+                def _match_str_tokens_to_input(text: str, str_tokens: List[str]) -> List[Optional[Tuple[int, int]]]:
+                    """Match the tokens to the input text, returning a list of tuples of the form (start_idx, end_idx) for each token."""
+                    # Initialize list to store token positions
+                    token_positions = []
+                    
+                    # Keep track of current position in text
+                    curr_pos = 0
+                    
+                    # For each token, try to find its position in the input text
+                    for token in str_tokens:
+                        # Search for token in remaining text
+                        pos = text.find(token, curr_pos)
+                        
+                        if pos != -1:
+                            # Found a match, store position and update curr_pos
+                            token_positions.append((pos, pos + len(token)))
+                            curr_pos = pos + len(token)
+                        else:
+                            # No match found. This is only allowed if the token is a special token
+                            # that doesn't appear in the input text
+                            if not (token.startswith("<") and token.endswith(">")):
+                                raise ValueError(f"Token {token} not found in input text")
+                            token_positions.append(None)
+                            
+                    return token_positions
+
+                token_origins = [{"key": "text", "range": pos} if pos is not None else None for pos in _match_str_tokens_to_input(input["text"], str_tokens)]
+            
+            if "images" in input:
+                if "chameleon" in self.cfg.model_name:
+                    assert "pixel_values" in processed, "Pixel values are required for Chameleon models"
+                    assert processed["pixel_values"].shape[2] == processed["pixel_values"].shape[3], "Pixel values must be square"
+                    _, _, image_tokens = self.vqmodel.encode(processed["pixel_values"])
+                    bpe_tokens = self.vocabulary_mapping.convert_img2bpe(image_tokens)
+                    bpe_tokens = bpe_tokens.view(1, -1)
+                    bpe_tokens = bpe_tokens.to(tokens.device, tokens.dtype)
+                    n_image_tokens = bpe_tokens.shape[1]
+                    n_image_tokens_in_text = (tokens == self.vocabulary_mapping.image_token_id).sum().item()
+                    assert n_image_tokens == n_image_tokens_in_text, "Number of image tokens should match number of image tokens in text"
+                    special_image_mask = tokens == self.vocabulary_mapping.image_token_id
+                    tokens: torch.Tensor = tokens.masked_scatter(special_image_mask, bpe_tokens)
+                    
+                    if not tokens_only:
+                        patch_index_in_image = None
+                        resolution = int(math.sqrt(processor.image_seq_length))
+                        
+                        def _get_patch_coords(patch_index: int) -> Tuple[int, int, int, int]:
+                            """Convert a patch index to (x1, y1, x2, y2) coordinates in the image.
+                            
+                            Args:
+                                patch_index: Index of the patch in the flattened sequence
+                                
+                            Returns:
+                                Tuple of (x1, y1, x2, y2) coordinates representing the patch boundaries
+                            """
+                            # Convert patch index to 2D coordinates in the grid
+                            row = patch_index // resolution  # resolution is both width and height
+                            col = patch_index % resolution
+                            
+                            # Calculate pixel coordinates
+                            patch_size = processed["pixel_values"].shape[2] // resolution
+                            
+                            x1 = col * patch_size
+                            y1 = row * patch_size
+                            x2 = x1 + patch_size
+                            y2 = y1 + patch_size
+                            
+                            return (x1, y1, x2, y2)
+                        
+                        for i, token in enumerate(str_tokens):
+                            if token == self.processor.image_start_token:
+                                patch_index_in_image = 0
+                            elif token == self.processor.image_end_token:
+                                assert patch_index_in_image == processor.image_seq_length, "Patch index in image should match image sequence length"
+                                patch_index_in_image = None
+                            else:
+                                if patch_index_in_image is not None:
+                                    token_origins[i] = {
+                                        "key": "image",
+                                        "rect": _get_patch_coords(patch_index_in_image)
+                                    }
+                                    patch_index_in_image += 1
+                else:
+                    raise ValueError("Only Chameleon models are currently supported for image inputs")
+            
+            if tokens_only:
+                return tokens
+            else:
+                return tokens, token_origins
 
     def to_single_token(self, string):
         """Map a string that makes up a single token to the id for that token.
@@ -1078,6 +1268,7 @@ class HookedTransformer(HookedRootModule):
         device: Optional[Union[str, torch.device]] = None,
         n_devices: int = 1,
         tokenizer: Optional[PreTrainedTokenizerBase] = None,
+        processor: Optional[Any] = None,
         move_to_device: bool = True,
         fold_value_biases: bool = True,
         default_prepend_bos: bool = True,
@@ -1320,9 +1511,15 @@ class HookedTransformer(HookedRootModule):
         model = cls(
             cfg,
             tokenizer,
+            processor,
             move_to_device=False,
             default_padding_side=default_padding_side,
         )
+        
+        if "chameleon" in model_name.lower():
+            assert hf_model is not None, "HF model must be provided for Chameleon models to extract the VQ model"
+            model.vqmodel = hf_model.model.vqmodel
+            model.vocabulary_mapping = hf_model.model.vocabulary_mapping
 
         model.load_and_process_state_dict(
             state_dict,
