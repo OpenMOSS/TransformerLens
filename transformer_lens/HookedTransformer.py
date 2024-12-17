@@ -1012,8 +1012,10 @@ class HookedTransformer(HookedRootModule):
                             curr_pos = pos + len(token)
                         else:
                             # No match found. This is only allowed if the token is a special token
-                            # that doesn't appear in the input text
-                            if not (token.startswith("<") and token.endswith(">")):
+                            # that doesn't appear in the input text, or if the token is a subword token
+                            # which cannot be decoded separately.
+                            # TODO: Deal with subword tokens properly
+                            if not ((token.startswith("<") and token.endswith(">")) or "�" in token):
                                 raise ValueError(f"Token {token} not found in input text")
                             token_positions.append(None)
                             
