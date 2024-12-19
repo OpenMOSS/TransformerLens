@@ -1039,30 +1039,66 @@ class HookedTransformer(HookedRootModule):
                     
                     if not tokens_only:
                         patch_index_in_image = None
-                        resolution = int(math.sqrt(processor.image_seq_length))
+                        image_index = 0
+                        n_patches_per_side = int(math.sqrt(processor.image_seq_length))
+                        processed_width = processed["pixel_values"].shape[3]
+                        processed_height = processed["pixel_values"].shape[2]
                         
-                        def _get_patch_coords(patch_index: int) -> Tuple[int, int, int, int]:
-                            """Convert a patch index to (x1, y1, x2, y2) coordinates in the image.
+                        def _get_patch_coords(patch_index: int, image_index: int) -> Tuple[int, int, int, int]:
+                            """Convert a patch index to (x1, y1, x2, y2) percentage coordinates in the original image.
+                            
+                            The processor will resize the image to make shorter side 512, and then center crop to 512x512.
+                            This method reverses the processing to get the original coordinates.
                             
                             Args:
-                                patch_index: Index of the patch in the flattened sequence
+                                patch_index: Index of the patch (0 to n_patches_per_side^2 - 1)
+                                image_index: Index of the image in the batch
                                 
                             Returns:
-                                Tuple of (x1, y1, x2, y2) coordinates representing the patch boundaries
+                                Tuple of (x1, y1, x2, y2) coordinates as proportions (0-1) of the original image
                             """
-                            # Convert patch index to 2D coordinates in the grid
-                            row = patch_index // resolution  # resolution is both width and height
-                            col = patch_index % resolution
+                            input_image = input["images"][image_index]
+                            input_width = input_image.shape[2]
+                            input_height = input_image.shape[1]
                             
-                            # Calculate pixel coordinates
-                            patch_size = processed["pixel_values"].shape[2] // resolution
+                            # Calculate patch size in the 512x512 processed space
+                            patch_size = 512 // n_patches_per_side
                             
-                            x1 = col * patch_size
-                            y1 = row * patch_size
-                            x2 = x1 + patch_size
-                            y2 = y1 + patch_size
+                            # Convert patch index to x,y coordinates in the 512x512 grid
+                            patch_y = (patch_index // n_patches_per_side) 
+                            patch_x = (patch_index % n_patches_per_side)
                             
-                            return (x1, y1, x2, y2)
+                            # Get coordinates in 512x512 space
+                            x1_512 = patch_x * patch_size
+                            y1_512 = patch_y * patch_size
+                            x2_512 = (patch_x + 1) * patch_size
+                            y2_512 = (patch_y + 1) * patch_size
+                            
+                            # Calculate scaling from original image to 512x512
+                            # The shorter side is scaled to 512, and the image is center cropped
+                            scale = 512 / min(input_height, input_width)
+                            scaled_width = int(input_width * scale)
+                            scaled_height = int(input_height * scale)
+                            
+                            # Calculate padding for center crop
+                            x_offset = (scaled_width - 512) // 2
+                            y_offset = (scaled_height - 512) // 2
+                            
+                            # Convert back to scaled coordinates
+                            x1_scaled = x1_512 + x_offset
+                            y1_scaled = y1_512 + y_offset
+                            x2_scaled = x2_512 + x_offset 
+                            y2_scaled = y2_512 + y_offset
+                            
+                            # Convert to original image coordinates as proportions
+                            x1_pct = (x1_scaled / scale) / input_width
+                            y1_pct = (y1_scaled / scale) / input_height
+                            x2_pct = (x2_scaled / scale) / input_width
+                            y2_pct = (y2_scaled / scale) / input_height
+                            
+                            return (x1_pct, y1_pct, x2_pct, y2_pct)
+                            
+                            
                         
                         for i, token in enumerate(str_tokens):
                             if token == self.processor.image_start_token:
@@ -1070,11 +1106,13 @@ class HookedTransformer(HookedRootModule):
                             elif token == self.processor.image_end_token:
                                 assert patch_index_in_image == processor.image_seq_length, "Patch index in image should match image sequence length"
                                 patch_index_in_image = None
+                                image_index += 1
                             else:
                                 if patch_index_in_image is not None:
                                     token_origins[i] = {
                                         "key": "image",
-                                        "rect": _get_patch_coords(patch_index_in_image)
+                                        "rect": _get_patch_coords(patch_index_in_image),
+                                        "image_index": image_index
                                     }
                                     patch_index_in_image += 1
                 else:
