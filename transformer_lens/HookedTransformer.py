@@ -1111,7 +1111,7 @@ class HookedTransformer(HookedRootModule):
                                 if patch_index_in_image is not None:
                                     token_origins[i] = {
                                         "key": "image",
-                                        "rect": _get_patch_coords(patch_index_in_image),
+                                        "rect": _get_patch_coords(patch_index_in_image, image_index),
                                         "image_index": image_index
                                     }
                                     patch_index_in_image += 1
