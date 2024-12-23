@@ -736,6 +736,9 @@ def convert_hf_model_config(model_name: str, **kwargs):
         architecture = "Gemma2ForCausalLM"
     elif "gemma" in official_model_name.lower():
         architecture = "GemmaForCausalLM"
+    elif "pythia" in official_model_name.lower():
+        architecture = "GPTNeoXForCausalLM"
+        hf_config = kwargs['hf_config']
     else:
         huggingface_token = os.environ.get("HF_TOKEN", None)
         hf_config = AutoConfig.from_pretrained(

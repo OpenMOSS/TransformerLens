@@ -25,7 +25,7 @@ from typing import (
 import torch
 import torch.nn as nn
 import torch.utils.hooks as hooks
-from transformer_lens.utils import Slice, SliceInput
+from transformer_lens.utils import Slice, SliceInput, set_nested_attr
 
 
 @dataclass
