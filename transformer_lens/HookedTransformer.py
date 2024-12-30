@@ -932,6 +932,7 @@ class HookedTransformer(HookedRootModule):
         padding_side: Optional[Union[Literal["left", "right"], None]] = USE_DEFAULT_VALUE,
     ) -> Tuple[Int[torch.Tensor, "batch pos"], List]: ...
 
+    @torch.no_grad()
     def to_tokens_with_origins(
         self,
         input: Dict[str, Any],

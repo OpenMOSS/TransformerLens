@@ -25,6 +25,7 @@ from typing import (
 import torch
 import torch.nn as nn
 import torch.utils.hooks as hooks
+
 from transformer_lens.utils import Slice, SliceInput, set_nested_attr
 
 
@@ -826,6 +827,7 @@ class HookedRootModule(nn.Module):
         for handle in hook_handles:
             handle.remove()
 
+    @torch.no_grad()
     def run_with_cache_until(
         self,
         *model_args: Any,
