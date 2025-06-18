@@ -82,6 +82,11 @@ class AbstractAttention(ABC, nn.Module):
         if self.attn_type == "global":
             # For global attention, this is a lower triangular matrix - key <= query
             self.register_buffer("mask", causal_mask)
+
+        elif self.attn_type == "bi-directional":
+            bi_directional_mask = torch.ones((self.cfg.n_ctx, self.cfg.n_ctx)).bool()
+            self.register_buffer("mask", bi_directional_mask)
+
         elif self.attn_type == "local":
             # For local, this is banded, query - window_size < key <= query
             if not isinstance(self.cfg.window_size, int):

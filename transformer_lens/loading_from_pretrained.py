@@ -43,6 +43,7 @@ from transformer_lens.pretrained.weight_conversions import (
     convert_qwen2_weights,
     convert_qwen_weights,
     convert_t5_weights,
+    convert_llada_weights,
 )
 
 OFFICIAL_MODEL_NAMES = [
@@ -237,6 +238,7 @@ OFFICIAL_MODEL_NAMES = [
     "google-t5/t5-large",
     "ai-forever/mGPT",
     "facebook/chameleon-7b",
+    "GSAI-ML/LLaDA-8B-Base",
 ]
 """Official model names for models on HuggingFace."""
 
@@ -663,6 +665,7 @@ MODEL_ALIASES = {
     "google-t5/t5-large": ["t5-large"],
     "ai-forever/mGPT": ["mGPT"],
     "facebook/chameleon-7b": ["chameleon-7b"],
+    "GSAI-ML/LLaDA-8B-Base": ["llada-8b-base"],
 }
 """Model aliases for models on HuggingFace."""
 
@@ -684,6 +687,7 @@ NEED_REMOTE_CODE_MODELS = (
     "Qwen/Qwen-",
     "microsoft/phi-2",
     "microsoft/Phi-3-mini-4k-instruct",
+    "GSAI-ML/LLaDA-8B-",
 )
 
 
@@ -739,6 +743,9 @@ def convert_hf_model_config(model_name: str, **kwargs):
     elif "pythia" in official_model_name.lower():
         architecture = "GPTNeoXForCausalLM"
         hf_config = kwargs['hf_config']
+    elif kwargs.get("hf_config", None) is not None:
+        hf_config = kwargs['hf_config']
+        architecture = hf_config.architectures[0]
     else:
         huggingface_token = os.environ.get("HF_TOKEN", None)
         hf_config = AutoConfig.from_pretrained(
@@ -1468,6 +1475,27 @@ def convert_hf_model_config(model_name: str, **kwargs):
             "gated_mlp": True,
             "use_post_qk_ln": True,
         }
+
+    elif architecture == "LLaDAModelLM":
+        cfg_dict = {
+            "d_model": hf_config.hidden_size,
+            "d_head": hf_config.hidden_size // hf_config.num_attention_heads,
+            "n_heads": hf_config.num_attention_heads,
+            "d_mlp": hf_config.mlp_hidden_size,
+            "n_layers": hf_config.num_hidden_layers,
+            "n_ctx": hf_config.max_sequence_length,
+            "eps": hf_config.rms_norm_eps,
+            "d_vocab": hf_config.vocab_size,
+            "act_fn": "silu",
+            "n_key_value_heads": hf_config.n_kv_heads,
+            "normalization_type": "RMS",
+            "positional_embedding_type": "rotary",
+            "rotary_dim": hf_config.hidden_size // hf_config.num_attention_heads,
+            "rotary_base": hf_config.rope_theta,
+            "final_rms": True,
+            "gated_mlp": True,
+            "attn_types": ["bi-directional"] * hf_config.num_hidden_layers,
+        }
     else:
         raise NotImplementedError(f"{architecture} is not currently supported.")
     # All of these models use LayerNorm
@@ -1569,7 +1597,7 @@ def get_pretrained_model_config(
     """
     if Path(model_name).exists():
         # If the model_name is a path, it's a local model
-        cfg_dict = convert_hf_model_config(model_name, **kwargs)
+        cfg_dict = convert_hf_model_config(model_name, hf_cfg=hf_cfg, **kwargs)
         official_model_name = model_name
     else:
         official_model_name = get_official_model_name(model_name)
@@ -1587,7 +1615,7 @@ def get_pretrained_model_config(
                 f"Loading model {official_model_name} requires setting trust_remote_code=True"
             )
             kwargs["trust_remote_code"] = True
-        cfg_dict = convert_hf_model_config(official_model_name, **kwargs)
+        cfg_dict = convert_hf_model_config(official_model_name, hf_cfg=hf_cfg, **kwargs)
     # Processing common to both model types
     # Remove any prefix, saying the organization who made a model.
     cfg_dict["model_name"] = official_model_name.split("/")[-1]
@@ -1865,6 +1893,8 @@ def get_pretrained_state_dict(
             state_dict = convert_gemma_weights(hf_model, cfg)
         elif cfg.original_architecture == "ChameleonForConditionalGeneration":
             state_dict = convert_chameleon_weights(hf_model, cfg)
+        elif cfg.original_architecture == "LLaDAModelLM":
+            state_dict = convert_llada_weights(hf_model, cfg)
         else:
             raise ValueError(
                 f"Loading weights from the architecture is not currently supported: {cfg.original_architecture}, generated from model name {cfg.model_name}. Feel free to open an issue on GitHub to request this feature."
