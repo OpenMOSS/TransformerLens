@@ -325,7 +325,7 @@ class HookedTransformer(HookedRootModule):
             )
             attention_mask = attention_mask.to(devices.get_device_for_block_index(0, self.cfg))
         elif (
-            self.tokenizer and self.tokenizer.padding_side == "left"
+            self.tokenizer
         ) or past_kv_cache is not None:
             # If the padding side is left or we are using caching, we need to compute the attention
             # mask for the adjustment of absolute positional embeddings and attention masking so
