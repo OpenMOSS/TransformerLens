@@ -50,4 +50,6 @@ class LayerNormPre(nn.Module):
             Float[torch.Tensor, "batch pos 1"],
             Float[torch.Tensor, "batch pos head_index 1"],
         ] = self.hook_scale((x.pow(2).mean(-1, keepdim=True) + self.eps).sqrt())
-        return self.hook_normalized(x / scale).to(self.cfg.dtype)
+        x = x / scale
+        x = self.hook_normalized(x.to(self.cfg.dtype))  # [batch, pos, length]
+        return x
