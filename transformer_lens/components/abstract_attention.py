@@ -8,7 +8,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from better_abc import abstract_attribute
 from jaxtyping import Float, Int
-from transformer_lens.components.layer_norm_per_head import LayerNormPerHead
+from transformer_lens.components.layer_norm_per_head import LayerNormPerHead, RMSNormPerHead
 from transformer_lens.FactoredMatrix import FactoredMatrix
 from transformer_lens.hook_points import HookPoint
 from transformer_lens.HookedTransformerConfig import HookedTransformerConfig
@@ -76,6 +76,16 @@ class AbstractAttention(ABC, nn.Module):
         self.b_O = nn.Parameter(torch.zeros(self.cfg.d_model, dtype=self.cfg.dtype))
 
         self.attn_type = attn_type
+        if self.cfg.use_post_qk_ln:
+            if self.cfg.normalization_type == "LN":
+                self.qk_ln_type = LayerNormPerHead
+            elif self.cfg.normalization_type == "RMS":
+                self.qk_ln_type = RMSNormPerHead
+            else:
+                raise ValueError(f"Invalid normalization type for QK-norm: {self.cfg.normalization_type}")
+        else:
+            self.qk_ln_type = None
+
         # Create a max_ctx x max_ctx mask, with True iff that query position
         # can attend to that key position (query is first axis, key is second axis)
         causal_mask = torch.tril(torch.ones((self.cfg.n_ctx, self.cfg.n_ctx)).bool())
@@ -110,8 +120,8 @@ class AbstractAttention(ABC, nn.Module):
             self.attn_scale *= self.layer_id + 1
 
         if self.cfg.use_post_qk_ln:
-            self.ln_q = LayerNormPerHead(self.cfg)
-            self.ln_k = LayerNormPerHead(self.cfg)
+            self.ln_q = self.qk_ln_type(self.cfg)
+            self.ln_k = self.qk_ln_type(self.cfg, n_heads=self.cfg.n_key_value_heads)
 
         self.hook_k = HookPoint()  # [batch, pos, head_index, d_head]
         self.hook_q = HookPoint()  # [batch, pos, head_index, d_head]
