@@ -21,3 +21,6 @@ from .t5 import convert_t5_weights
 from .neel_solu_old import convert_neel_solu_old_weights
 from .chameleon import convert_chameleon_weights
 from .llada import convert_llada_weights
+from .olmo import convert_olmo_weights
+from .olmoe import convert_olmoe_weights
+from .olmo2 import convert_olmo2_weights

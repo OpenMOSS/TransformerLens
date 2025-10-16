@@ -194,6 +194,14 @@ class HookedTransformerConfig:
             Defaults to 8.0.
         use_post_qk_ln (bool): Whether to apply layer normalization after the query and key
             transformations in the attention mechanism. Defaults to False.
+        use_post_layer_norm (bool): Whether to apply layer normalization AFTER attention/MLP
+            outputs instead of before inputs. Used in Olmo2 architecture. Defaults to False.
+        rmsnorm_per_head_mean_over_pos (bool): For RMSNormPerHead, whether to average over both
+            position and head dimensions ([-1, -2]) instead of just head dimension ([-1]).
+            Used in Olmo2 architecture. Defaults to False.
+        center_embedding_weights (bool): Whether to center embedding weights during weight
+            folding operations. Should be False for architectures like Olmo2 where the first
+            layer's attention input is not normalized. Defaults to True.
     """
 
     n_layers: int
@@ -264,6 +272,9 @@ class HookedTransformerConfig:
     NTK_by_parts_factor: float = 8.0
     old_context_len: Optional[int] = None
     use_post_qk_ln: bool = False
+    use_post_layer_norm: bool = False
+    rmsnorm_per_head_mean_over_pos: bool = False
+    center_embedding_weights: bool = True
 
     def __post_init__(self):
         if self.n_heads == -1:

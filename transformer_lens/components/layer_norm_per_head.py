@@ -77,10 +77,11 @@ class RMSNormPerHead(nn.Module):
     ) -> Float[torch.Tensor, "batch pos length"]:
         if self.cfg.dtype not in [torch.float32, torch.float64]:
             x = x.to(torch.float32)
+        mean_dims = [-1, -2] if self.cfg.rmsnorm_per_head_mean_over_pos else [-1]
         scale: Float[torch.Tensor, "batch pos 1"] = self.hook_scale(
-            (x.pow(2).mean(-1, keepdim=True) + self.eps).sqrt()
+            (x.pow(2).mean(mean_dims, keepdim=True) + self.eps).sqrt()
         )
         x = x / scale * self.w
         x = self.hook_normalized(x.to(self.cfg.dtype))  # [batch, pos, length]
         return x
-
+    

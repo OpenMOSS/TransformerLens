@@ -45,6 +45,9 @@ from transformer_lens.pretrained.weight_conversions import (
     convert_qwen_weights,
     convert_t5_weights,
     convert_llada_weights,
+    convert_olmo_weights,
+    convert_olmo2_weights,
+    convert_olmoe_weights,
 )
 
 OFFICIAL_MODEL_NAMES = [
@@ -241,6 +244,27 @@ OFFICIAL_MODEL_NAMES = [
     "ai-forever/mGPT",
     "facebook/chameleon-7b",
     "GSAI-ML/LLaDA-8B-Base",
+    "allenai/OLMo-1B-hf",
+    "allenai/OLMo-7B-hf",
+    "allenai/OLMo-7B-0724-hf",
+    "allenai/OLMo-7B-0724-SFT-hf",
+    "allenai/OLMo-7B-0724-Instruct-hf",
+    "allenai/OLMo-7B-0424-hf",
+    "allenai/OLMo-7B-Twin-2T-hf",
+    "allenai/OLMo-1B-0724-hf",
+    "allenai/OLMo-7B-Instruct-hf",
+    "allenai/OLMo-7B-SFT-hf",
+    "allenai/OLMoE-1B-7B-0924",
+    "allenai/OLMoE-1B-7B-0924-SFT",
+    "allenai/OLMoE-1B-7B-0924-Instruct",
+    "allenai/OLMo-2-0425-1B",
+    "allenai/OLMo-2-0425-1B-SFT",
+    "allenai/OLMo-2-0425-1B-DPO",
+    "allenai/OLMo-2-0425-1B-Instruct",
+    "allenai/OLMo-2-1124-7B",
+    "allenai/OLMo-2-1124-7B-SFT",
+    "allenai/OLMo-2-1124-7B-DPO",
+    "allenai/OLMo-2-1124-7B-Instruct",
 ]
 """Official model names for models on HuggingFace."""
 
@@ -1522,6 +1546,111 @@ def convert_hf_model_config(model_name: str, **kwargs):
             "gated_mlp": True,
             "attn_types": ["bi-directional"] * hf_config.num_hidden_layers,
         }
+    elif official_model_name.startswith("allenai/OLMo-1B") and official_model_name.endswith("hf"):
+        cfg_dict = {
+            "d_model": 2048,
+            "d_head": 128,
+            "n_heads": 16,
+            "d_mlp": 8192,
+            "n_layers": 16,
+            "n_ctx": 2048,
+            "eps": 1e-05,
+            "d_vocab": 50304,
+            "act_fn": "silu",
+            "initializer_range": 0.02,
+            "normalization_type": "LN",
+            "rotary_base": 10000.0,
+            "attn_types": ["global"] * 16,
+            "positional_embedding_type": "rotary",
+            "gated_mlp": True,
+        }
+    elif official_model_name.startswith("allenai/OLMo-7B") and official_model_name.endswith("hf"):
+        cfg_dict = {
+            "d_model": 4096,
+            "d_head": 128,
+            "n_heads": 32,
+            "d_mlp": 11008,
+            "n_layers": 32,
+            "n_ctx": 2048,
+            "eps": 1e-05,
+            "d_vocab": 50304,
+            "act_fn": "silu",
+            "initializer_range": 0.02,
+            "normalization_type": "LN",
+            "rotary_base": 10000.0,
+            "attn_types": ["global"] * 32,
+            "positional_embedding_type": "rotary",
+            "gated_mlp": True,
+        }
+    elif official_model_name.startswith("allenai/OLMo-2-0425-1B"):
+        cfg_dict = {
+            "d_model": 2048,
+            "d_head": 128,
+            "n_heads": 16,
+            "d_mlp": 8192,
+            "n_layers": 16,
+            "n_ctx": 4096,
+            "eps": 1e-06,
+            "d_vocab": 100352,
+            "act_fn": "silu",
+            "initializer_range": 0.02,
+            "normalization_type": "RMS",
+            "rotary_base": 500000.0,
+            "attn_types": ["global"] * 16,
+            "positional_embedding_type": "rotary",
+            "gated_mlp": True,
+            "use_post_qk_ln": True,
+            "use_post_layer_norm": True,
+            "rmsnorm_per_head_mean_over_pos": True,
+            "center_embedding_weights": False,
+        }
+    elif official_model_name.startswith("allenai/OLMo-2-1124-7B"):
+        cfg_dict = {
+            "d_model": 4096,
+            "d_head": 128,
+            "n_heads": 32,
+            "d_mlp": 11008,
+            "n_layers": 32,
+            "n_ctx": 4096,
+            "eps": 1e-06,
+            "d_vocab": 100352,
+            "act_fn": "silu",
+            "initializer_range": 0.02,
+            "normalization_type": "RMS",
+            "rotary_base": 500000.0,
+            "attn_types": ["global"] * 32,
+            "positional_embedding_type": "rotary",
+            "gated_mlp": True,
+            "use_post_qk_ln": True,
+            "use_post_layer_norm": True,
+            "rmsnorm_per_head_mean_over_pos": True,
+            "center_embedding_weights": False,
+        }
+    elif architecture == "OlmoeForCausalLM":
+        cfg_dict = {
+            "d_model": hf_config.hidden_size,
+            "d_head": hf_config.hidden_size // hf_config.num_attention_heads,
+            "n_heads": hf_config.num_attention_heads,
+            "d_mlp": hf_config.intermediate_size,
+            "n_layers": hf_config.num_hidden_layers,
+            "n_ctx": hf_config.max_position_embeddings,
+            "eps": hf_config.rms_norm_eps,
+            "d_vocab": hf_config.vocab_size,
+            "act_fn": hf_config.hidden_act,
+            "num_experts": hf_config.num_experts,
+            "experts_per_token": hf_config.num_experts_per_tok,
+            "norm_topk_prob": hf_config.norm_topk_prob,
+            "n_key_value_heads": hf_config.num_key_value_heads,
+            "rotary_base": hf_config.rope_theta,
+            "tie_word_embeddings": hf_config.tie_word_embeddings,
+            "initializer_range": hf_config.initializer_range,
+            "positional_embedding_type": "rotary",
+            "rotary_dim": hf_config.hidden_size // hf_config.num_attention_heads,
+            "final_rms": True,
+            "gated_mlp": True,
+            "normalization_type": "LN",
+            "use_post_qk_ln": True,
+        }
     else:
         raise NotImplementedError(f"{architecture} is not currently supported.")
     # All of these models use LayerNorm
@@ -1922,6 +2051,12 @@ def get_pretrained_state_dict(
             state_dict = convert_chameleon_weights(hf_model, cfg)
         elif cfg.original_architecture == "LLaDAModelLM":
             state_dict = convert_llada_weights(hf_model, cfg)
+        elif cfg.original_architecture == "OlmoForCausalLM":
+            state_dict = convert_olmo_weights(hf_model, cfg)
+        elif cfg.original_architecture == "Olmo2ForCausalLM":
+            state_dict = convert_olmo2_weights(hf_model, cfg)
+        elif cfg.original_architecture == "OlmoeForCausalLM":
+            state_dict = convert_olmoe_weights(hf_model, cfg)
         else:
             raise ValueError(
                 f"Loading weights from the architecture is not currently supported: {cfg.original_architecture}, generated from model name {cfg.model_name}. Feel free to open an issue on GitHub to request this feature."
