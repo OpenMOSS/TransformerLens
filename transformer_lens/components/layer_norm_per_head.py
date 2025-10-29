@@ -25,8 +25,8 @@ class LayerNormPerHead(nn.Module):
         
         self.n_heads = n_heads if n_heads is not None else self.cfg.n_heads
 
-        self.w = nn.Parameter(torch.ones((self.n_heads, self.cfg.d_head), dtype=self.cfg.dtype))
-        self.b = nn.Parameter(torch.zeros((self.n_heads, self.cfg.d_head), dtype=self.cfg.dtype))
+        self.w = nn.Parameter(torch.ones((self.n_heads, self.cfg.d_head)))
+        self.b = nn.Parameter(torch.zeros((self.n_heads, self.cfg.d_head)))
 
         # Adds a hook point for the normalisation scale factor
         self.hook_scale = HookPoint()  # [batch, pos, 1]
@@ -52,3 +52,35 @@ class LayerNormPerHead(nn.Module):
         )
         x = x / scale  # [batch, pos, length]
         return self.hook_normalized(x * self.w + self.b).to(self.cfg.dtype)
+
+class RMSNormPerHead(nn.Module):
+    def __init__(self, cfg: Union[Dict, HookedTransformerConfig], n_heads: Optional[int] = None):
+        """
+        RMSNorm - LayerNorm without the centering and bias (RMS = Root Mean Square)
+
+        length (Optional[int]): If the dimension of the RMSNorm. If not provided, assumed to be d_model
+        """
+        super().__init__()
+        self.cfg = HookedTransformerConfig.unwrap(cfg)
+        self.eps = self.cfg.eps
+
+        self.n_heads = n_heads if n_heads is not None else self.cfg.n_heads
+
+        self.w = nn.Parameter(torch.ones((self.n_heads, self.cfg.d_head)))
+
+        # Adds a hook point for the normalisation scale factor
+        self.hook_scale = HookPoint()  # [batch, pos, 1]
+        self.hook_normalized = HookPoint()  # [batch, pos, length]
+
+    def forward(
+        self, x: Float[torch.Tensor, "batch pos length"]
+    ) -> Float[torch.Tensor, "batch pos length"]:
+        if self.cfg.dtype not in [torch.float32, torch.float64]:
+            x = x.to(torch.float32)
+        scale: Float[torch.Tensor, "batch pos 1"] = self.hook_scale(
+            (x.pow(2).mean(-1, keepdim=True) + self.eps).sqrt()
+        )
+        x = x / scale * self.w
+        x = self.hook_normalized(x.to(self.cfg.dtype))  # [batch, pos, length]
+        return x
+

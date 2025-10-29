@@ -107,6 +107,7 @@ class TransformerBlock(nn.Module):
         shortformer_pos_embed: Optional[Float[torch.Tensor, "batch pos d_model"]] = None,
         past_kv_cache_entry: Optional[HookedTransformerKeyValueCacheEntry] = None,
         attention_mask: Optional[Int[torch.Tensor, "batch offset_pos"]] = None,
+        use_flash_attn: bool = False,
     ) -> Float[torch.Tensor, "batch pos d_model"]:
         """A single Transformer block.
 
@@ -168,6 +169,7 @@ class TransformerBlock(nn.Module):
                 value_input=self.ln1(value_input),
                 past_kv_cache_entry=past_kv_cache_entry,
                 attention_mask=attention_mask,
+                use_flash_attn=use_flash_attn,
             )
         )  # [batch, pos, d_model]
         if self.cfg.use_normalization_before_and_after:

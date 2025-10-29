@@ -172,8 +172,6 @@ class HookPoint(nn.Module):
         split_name = self.name.split(".")
         return int(split_name[1])
 
-
-# %%
 class HookedRootModule(nn.Module):
     """A class building on nn.Module to interface nicely with HookPoints.
 

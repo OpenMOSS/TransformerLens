@@ -6,9 +6,10 @@ import einops
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from torch.nn.attention import SDPBackend, sdpa_kernel
 from better_abc import abstract_attribute
 from jaxtyping import Float, Int
-from transformer_lens.components.layer_norm_per_head import LayerNormPerHead
+from transformer_lens.components.layer_norm_per_head import LayerNormPerHead, RMSNormPerHead
 from transformer_lens.FactoredMatrix import FactoredMatrix
 from transformer_lens.hook_points import HookPoint
 from transformer_lens.HookedTransformerConfig import HookedTransformerConfig
@@ -76,6 +77,16 @@ class AbstractAttention(ABC, nn.Module):
         self.b_O = nn.Parameter(torch.zeros(self.cfg.d_model, dtype=self.cfg.dtype))
 
         self.attn_type = attn_type
+        if self.cfg.use_post_qk_ln:
+            if self.cfg.normalization_type == "LN":
+                self.qk_ln_type = LayerNormPerHead
+            elif self.cfg.normalization_type == "RMS":
+                self.qk_ln_type = RMSNormPerHead
+            else:
+                raise ValueError(f"Invalid normalization type for QK-norm: {self.cfg.normalization_type}")
+        else:
+            self.qk_ln_type = None
+
         # Create a max_ctx x max_ctx mask, with True iff that query position
         # can attend to that key position (query is first axis, key is second axis)
         causal_mask = torch.tril(torch.ones((self.cfg.n_ctx, self.cfg.n_ctx)).bool())
@@ -110,8 +121,8 @@ class AbstractAttention(ABC, nn.Module):
             self.attn_scale *= self.layer_id + 1
 
         if self.cfg.use_post_qk_ln:
-            self.ln_q = LayerNormPerHead(self.cfg)
-            self.ln_k = LayerNormPerHead(self.cfg)
+            self.ln_q = self.qk_ln_type(self.cfg)
+            self.ln_k = self.qk_ln_type(self.cfg, n_heads=self.cfg.n_key_value_heads)
 
         self.hook_k = HookPoint()  # [batch, pos, head_index, d_head]
         self.hook_q = HookPoint()  # [batch, pos, head_index, d_head]
@@ -193,6 +204,7 @@ class AbstractAttention(ABC, nn.Module):
         additive_attention_mask: Optional[Float[torch.Tensor, "batch 1 1 kv_pos"]] = None,
         attention_mask: Optional[Int[torch.Tensor, "batch offset_pos"]] = None,
         position_bias: Optional[Float[torch.Tensor, "1 head_index pos kv_pos"]] = None,
+        use_flash_attn: bool = False,
     ) -> Float[torch.Tensor, "batch pos d_model"]:
         """
         shortformer_pos_embed is only used if self.cfg.positional_embedding_type == "shortformer", else defaults to None and is irrelevant. See HookedTransformerConfig for more details
@@ -221,58 +233,61 @@ class AbstractAttention(ABC, nn.Module):
                 self.apply_rotary(k, 0, attention_mask)
             )  # keys are cached so no offset
 
-        if self.cfg.dtype not in [torch.float32, torch.float64]:
-            # If using 16 bits, increase the precision to avoid numerical instabilities
-            q = q.to(torch.float32)
-            k = k.to(torch.float32)
+        if use_flash_attn == True and self.cfg.positional_embedding_type == "rotary" and self.cfg.dtype in [torch.bfloat16, torch.float16]:
+            z = self.calculate_z_wiz_flash_attn(q, k, v)
+        else:
+            if self.cfg.dtype not in [torch.float32, torch.float64]:
+                # If using 16 bits, increase the precision to avoid numerical instabilities
+                q = q.to(torch.float32)
+                k = k.to(torch.float32)
 
-        attn_scores = self.calculate_attention_scores(
-            q, k
-        )  # [batch, head_index, query_pos, key_pos]
+            attn_scores = self.calculate_attention_scores(
+                q, k
+            )  # [batch, head_index, query_pos, key_pos]
 
-        if self.cfg.positional_embedding_type == "alibi":
-            query_ctx = attn_scores.size(-2)
-            # The key context length is the number of positions in the past - this includes all positions in the cache
-            key_ctx = attn_scores.size(-1)
+            if self.cfg.positional_embedding_type == "alibi":
+                query_ctx = attn_scores.size(-2)
+                # The key context length is the number of positions in the past - this includes all positions in the cache
+                key_ctx = attn_scores.size(-1)
 
-            # only recompute when necessary to increase efficiency.
-            if self.alibi is None or key_ctx > self.alibi.size(-1):
-                self.alibi = AbstractAttention.create_alibi_bias(
-                    self.cfg.n_heads, key_ctx, self.cfg.device
-                )
-
-            attn_scores += self.alibi[
-                :, :query_ctx, :key_ctx
-            ]  # [batch, head_index, query_pos, key_pos]
-        elif self.cfg.positional_embedding_type == "relative_positional_bias":
-            if position_bias is None:
-                if self.has_relative_attention_bias:
-                    raise ValueError("Positional bias is required for relative_positional_bias")
-                else:
-                    position_bias = torch.zeros(
-                        1,
-                        self.cfg.n_heads,
-                        attn_scores.shape[2],
-                        attn_scores.shape[3],
-                        device=attn_scores.device,
+                # only recompute when necessary to increase efficiency.
+                if self.alibi is None or key_ctx > self.alibi.size(-1):
+                    self.alibi = AbstractAttention.create_alibi_bias(
+                        self.cfg.n_heads, key_ctx, self.cfg.device
                     )
 
-            attn_scores += position_bias
-        if self.cfg.attention_dir == "causal":
-            # If causal attention, we mask it to only attend backwards. If bidirectional, we don't mask.
-            attn_scores = self.apply_causal_mask(
-                attn_scores, kv_cache_pos_offset, attention_mask
-            )  # [batch, head_index, query_pos, key_pos]
-        if additive_attention_mask is not None:
-            attn_scores += additive_attention_mask
+                attn_scores += self.alibi[
+                    :, :query_ctx, :key_ctx
+                ]  # [batch, head_index, query_pos, key_pos]
+            elif self.cfg.positional_embedding_type == "relative_positional_bias":
+                if position_bias is None:
+                    if self.has_relative_attention_bias:
+                        raise ValueError("Positional bias is required for relative_positional_bias")
+                    else:
+                        position_bias = torch.zeros(
+                            1,
+                            self.cfg.n_heads,
+                            attn_scores.shape[2],
+                            attn_scores.shape[3],
+                            device=attn_scores.device,
+                        )
 
-        attn_scores = self.hook_attn_scores(attn_scores)
-        pattern = F.softmax(attn_scores, dim=-1)
-        pattern = torch.where(torch.isnan(pattern), torch.zeros_like(pattern), pattern)
-        pattern = self.hook_pattern(pattern)  # [batch, head_index, query_pos, key_pos]
-        pattern = pattern.to(self.cfg.dtype)
-        pattern = pattern.to(v.device)
-        z = self.calculate_z_scores(v, pattern)  # [batch, pos, head_index, d_head]
+                attn_scores += position_bias
+            if self.cfg.attention_dir == "causal":
+                # If causal attention, we mask it to only attend backwards. If bidirectional, we don't mask.
+                attn_scores = self.apply_causal_mask(
+                    attn_scores, kv_cache_pos_offset, attention_mask
+                )  # [batch, head_index, query_pos, key_pos]
+            if additive_attention_mask is not None:
+                attn_scores += additive_attention_mask
+
+            attn_scores = self.hook_attn_scores(attn_scores)
+            pattern = F.softmax(attn_scores, dim=-1)
+            pattern = torch.where(torch.isnan(pattern), torch.zeros_like(pattern), pattern)
+            pattern = self.hook_pattern(pattern)  # [batch, head_index, query_pos, key_pos]
+            pattern = pattern.to(self.cfg.dtype)
+            pattern = pattern.to(v.device)
+            z = self.calculate_z_scores(v, pattern)  # [batch, pos, head_index, d_head]
         if not self.cfg.use_attn_result:
             if self.cfg.load_in_4bit:
                 # call bitsandbytes method to dequantize and multiply
@@ -444,6 +459,21 @@ class AbstractAttention(ABC, nn.Module):
                 "batch head_index query_pos d_head -> batch query_pos head_index d_head",
             )
         )
+        return z
+    
+    def calculate_z_wiz_flash_attn(
+        self,
+        q: Float[torch.Tensor, "batch query_pos head_index d_head"],
+        k: Float[torch.Tensor, "batch key_pos head_index d_head"],
+        v: Float[torch.Tensor, "batch key_pos head_index d_head"],
+    ) -> Float[torch.Tensor, "batch query_pos head_index d_head"]:
+        query = q.permute(0, 2, 1, 3)
+        key = k.permute(0, 2, 1, 3)
+        value = v.permute(0, 2, 1, 3)
+        with sdpa_kernel(backends=[SDPBackend.FLASH_ATTENTION]):
+            z = F.scaled_dot_product_attention(query,key,value,scale=1/self.attn_scale,is_causal=True,enable_gqa=True)
+        z = z.permute(0, 2, 1, 3)
+        z = self.hook_z(z)
         return z
 
     def apply_causal_mask(

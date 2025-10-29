@@ -41,6 +41,7 @@ from transformer_lens.pretrained.weight_conversions import (
     convert_phi3_weights,
     convert_phi_weights,
     convert_qwen2_weights,
+    convert_qwen3_weights,
     convert_qwen_weights,
     convert_t5_weights,
     convert_llada_weights,
@@ -215,6 +216,8 @@ OFFICIAL_MODEL_NAMES = [
     "Qwen/Qwen2-1.5B-Instruct",
     "Qwen/Qwen2-7B",
     "Qwen/Qwen2-7B-Instruct",
+    "Qwen/Qwen3-0.6B",
+    "Qwen/Qwen3-4B-Instruct-2507",
     "microsoft/phi-1",
     "microsoft/phi-1_5",
     "microsoft/phi-2",
@@ -642,6 +645,8 @@ MODEL_ALIASES = {
     "Qwen/Qwen1.5-7B-Chat": ["qwen1.5-7b-chat"],
     "Qwen/Qwen1.5-14B": ["qwen1.5-14b"],
     "Qwen/Qwen1.5-14B-Chat": ["qwen1.5-14b-chat"],
+    "Qwen/Qwen3-0.6B": ["qwen3-0.6b"],
+    "Qwen/Qwen3-4B-Instruct-2507": ["qwen3-4b-instruct"],
     "microsoft/phi-1": ["phi-1"],
     "microsoft/phi-1_5": ["phi-1_5"],
     "microsoft/phi-2": ["phi-2"],
@@ -684,7 +689,6 @@ DEFAULT_MODEL_ALIASES = [
 
 NEED_REMOTE_CODE_MODELS = (
     "bigcode/santacoder",
-    "Qwen/Qwen-",
     "microsoft/phi-2",
     "microsoft/Phi-3-mini-4k-instruct",
     "GSAI-ML/LLaDA-8B-",
@@ -1267,6 +1271,30 @@ def convert_hf_model_config(model_name: str, **kwargs):
             "final_rms": True,
             "gated_mlp": True,
         }
+    elif architecture == "Qwen3ForCausalLM":
+        cfg_dict = {
+            "d_model": hf_config.hidden_size,
+            "d_head": hf_config.head_dim,
+            "n_heads": hf_config.num_attention_heads,
+            "n_key_value_heads": hf_config.num_key_value_heads,
+            "d_mlp": hf_config.intermediate_size,
+            "n_layers": hf_config.num_hidden_layers,
+            "n_ctx": 2048,  # Capped bc the actual ctx length is 30k and the attn mask would be too big
+            "eps": hf_config.rms_norm_eps,
+            "d_vocab": hf_config.vocab_size,
+            "act_fn": hf_config.hidden_act,
+            "use_attn_scale": True,
+            "use_post_qk_ln": True,
+            "initializer_range": hf_config.initializer_range,
+            "normalization_type": "RMS",
+            "positional_embedding_type": "rotary",
+            "rotary_base": hf_config.rope_theta,
+            "rotary_adjacent_pairs": False,
+            "rotary_dim": hf_config.head_dim,
+            "tokenizer_prepends_bos": True,
+            "final_rms": True,
+            "gated_mlp": True,
+        }
     elif architecture == "PhiForCausalLM":
         # Architecture for microsoft/phi models
         cfg_dict = {
@@ -1736,7 +1764,6 @@ def get_checkpoint_labels(model_name: str, **kwargs):
         raise ValueError(f"Model {official_model_name} is not checkpointed.")
 
 
-# %% Loading state dicts
 def get_pretrained_state_dict(
     official_model_name: str,
     cfg: HookedTransformerConfig,
@@ -1883,6 +1910,8 @@ def get_pretrained_state_dict(
             state_dict = convert_qwen_weights(hf_model, cfg)
         elif cfg.original_architecture == "Qwen2ForCausalLM":
             state_dict = convert_qwen2_weights(hf_model, cfg)
+        elif cfg.original_architecture == "Qwen3ForCausalLM":
+            state_dict = convert_qwen3_weights(hf_model, cfg)
         elif cfg.original_architecture == "PhiForCausalLM":
             state_dict = convert_phi_weights(hf_model, cfg)
         elif cfg.original_architecture == "Phi3ForCausalLM":
