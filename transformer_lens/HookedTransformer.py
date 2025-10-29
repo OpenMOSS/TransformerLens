@@ -413,6 +413,7 @@ class HookedTransformer(HookedRootModule):
         attention_mask: Optional[torch.Tensor] = None,  # [batch pos]
         stop_at_layer: Optional[int] = None,
         past_kv_cache: Optional[HookedTransformerKeyValueCache] = None,
+        use_flash_attn: bool = False,
     ) -> Loss:
         ...
 
@@ -430,6 +431,7 @@ class HookedTransformer(HookedRootModule):
         attention_mask: Optional[torch.Tensor] = None,  # [batch pos]
         stop_at_layer: Optional[int] = None,
         past_kv_cache: Optional[HookedTransformerKeyValueCache] = None,
+        use_flash_attn: bool = False,
     ) -> Loss:
         ...
 
@@ -447,6 +449,7 @@ class HookedTransformer(HookedRootModule):
         attention_mask: Optional[torch.Tensor] = None,  # [batch pos]
         stop_at_layer: Optional[int] = None,
         past_kv_cache: Optional[HookedTransformerKeyValueCache] = None,
+        use_flash_attn: bool = False,
     ) -> Tuple[Float[torch.Tensor, "batch pos d_vocab"], Loss]:
         ...
 
@@ -464,6 +467,7 @@ class HookedTransformer(HookedRootModule):
         attention_mask: Optional[torch.Tensor] = None,  # [batch pos]
         stop_at_layer: Optional[int] = None,
         past_kv_cache: Optional[HookedTransformerKeyValueCache] = None,
+        use_flash_attn: bool = False,
     ) -> None:
         ...
 
@@ -485,6 +489,7 @@ class HookedTransformer(HookedRootModule):
         attention_mask: Optional[torch.Tensor] = None,  # [batch pos]
         stop_at_layer: Optional[int] = None,
         past_kv_cache: Optional[HookedTransformerKeyValueCache] = None,
+        use_flash_attn: bool = False,
     ) -> Union[
         None,
         Float[torch.Tensor, "batch pos d_vocab"],
@@ -598,6 +603,7 @@ class HookedTransformer(HookedRootModule):
                     past_kv_cache_entry=past_kv_cache[i] if past_kv_cache is not None else None,
                     shortformer_pos_embed=shortformer_pos_embed,
                     attention_mask=attention_mask,
+                    use_flash_attn = use_flash_attn,
                 )  # [batch, pos, d_model]
 
             if stop_at_layer is not None:
