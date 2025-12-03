@@ -44,7 +44,7 @@ def convert_qwen3_weights(qwen, cfg: HookedTransformerConfig):
 
     state_dict["ln_final.w"] = qwen.model.norm.weight
 
-    state_dict["unembed.W_U"] = qwen.model.embed_tokens.weight.T
+    state_dict["unembed.W_U"] = qwen.lm_head.weight.T
     state_dict["unembed.b_U"] = torch.zeros(cfg.d_vocab, dtype=cfg.dtype)
 
     return state_dict

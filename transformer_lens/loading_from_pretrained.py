@@ -220,7 +220,9 @@ OFFICIAL_MODEL_NAMES = [
     "Qwen/Qwen2-7B",
     "Qwen/Qwen2-7B-Instruct",
     "Qwen/Qwen3-0.6B",
+    "Qwen/Qwen3-1.7B",
     "Qwen/Qwen3-4B-Instruct-2507",
+    "Qwen/Qwen3-8B",
     "microsoft/phi-1",
     "microsoft/phi-1_5",
     "microsoft/phi-2",
@@ -670,7 +672,9 @@ MODEL_ALIASES = {
     "Qwen/Qwen1.5-14B": ["qwen1.5-14b"],
     "Qwen/Qwen1.5-14B-Chat": ["qwen1.5-14b-chat"],
     "Qwen/Qwen3-0.6B": ["qwen3-0.6b"],
+    "Qwen/Qwen3-1.7B": ["qwen3-1.7b"],
     "Qwen/Qwen3-4B-Instruct-2507": ["qwen3-4b-instruct"],
+    "Qwen/Qwen3-8B": ["qwen3-8b"],
     "microsoft/phi-1": ["phi-1"],
     "microsoft/phi-1_5": ["phi-1_5"],
     "microsoft/phi-2": ["phi-2"],
@@ -1318,6 +1322,7 @@ def convert_hf_model_config(model_name: str, **kwargs):
             "tokenizer_prepends_bos": True,
             "final_rms": True,
             "gated_mlp": True,
+            "tie_word_embeddings": hf_config.tie_word_embeddings,
         }
     elif architecture == "PhiForCausalLM":
         # Architecture for microsoft/phi models
