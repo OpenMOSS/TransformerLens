@@ -1,3 +1,5 @@
+__version__ = "2.16.2+lmsaes"
+
 from . import hook_points
 from . import utils
 from . import evals
